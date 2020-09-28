@@ -1,0 +1,216 @@
+%python
+from bi_zeppelin_util import init_app 
+from ti_daf import sql_util, TxMode  
+from ti_daf.sql_tx import session_scope    
+from bi_common_util.etl_excel_writer import XlsxWriter
+from bi_zeppelin_util.send_email import EmailClient
+
+def query_databases_result(sql_text):
+    init_app()
+    with session_scope(tx_mode=TxMode.NONE_TX, ns_server_id='/python/db/dev_dw_db/') as session:
+        row_result = sql_util.select_rows_by_sql(sql_text, {}, max_size=-1)
+        return row_result
+        
+        
+sql_text = '''
+   select aa.cplx,
+       aa.zcshs,
+       aa.smshs,
+       aa.wsmshs,
+       bb.ljzcshs,
+       cc.zzjj,
+       cc.hhr,
+       cc.ctdls,
+       cc.fr,
+       cc.yq,
+       cc.xygj
+    from (select case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end cplx,
+            count(distinct d.partyid) zcshs,
+            count(distinct case when d.applystatus = '1' then d.partyid end) smshs,
+            count(distinct case when d.corporaterepresentidno is null then d.partyid end) wsmshs
+        from dev_dw.dim_txnparty d
+        where d.crtdate = to_char(sysdate-1,'yyyymmdd')
+        group by case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end) aa
+            
+left join (select case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end cplx,
+            count(distinct d.partyid) ljzcshs
+from dev_dw.dim_txnparty d
+where d.partyid = d.relatedpartyid
+group by case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end) bb
+            
+on aa.cplx = bb.cplx
+
+left join (select case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end cplx,
+            
+            count(distinct case when d.agentpartygrpid = '1014816000447488' then d.partyid end) fr,
+            count(distinct case when d.agentpartygrpid in ('1014816000387953','1014816000733855') then d.partyid end) zzjj,
+            count(distinct case when d.agentpartygrpid = '1014816000774940' then d.partyid end) xygj,
+            count(distinct case when d.agentpartygrpid = '1014816000735566' then d.partyid end) yq,
+            count(distinct case when f.hhflag = 'Y' then d.partyid end) hhr,
+            count(distinct case when f.hhflag != 'Y' and d.agentpartygrpid not in ('1014816000447488','1014816000387953','1014816000733855','1014816000774940','1014816000735566') then d.partyid end) ctdls
+            
+from dev_dw.dim_txnparty d
+left join dev_dw.f_agentparty f
+on f.partyid = d.agentpartygrpid
+where d.crtdate = to_char(sysdate-1,'yyyymmdd')
+group by case when d.brandcode = 'APOS' and d.hhmflag = 'N' then 'APOS'
+            when d.brandcode = 'NPOS' then 'NPOS'
+            when d.brandcode = 'APOS' and d.hhmflag = 'Y' then '和码码'
+            when d.brandcode = 'AXF' then '安鑫付'
+            when d.brandcode = 'CASHIER' then '和付收银' else 'SDK' end) cc
+            
+on aa.cplx = cc.cplx
+
+order by aa.cplx
+    '''
+    
+sql_text2='''
+select count(distinct d.corporaterepresentidno) ljshs,
+count(distinct d.partyid) ljsbs
+from dev_dw.dim_txnparty d
+where d.partyid = d.relatedpartyid
+and d.mcc = '2222'
+ '''
+
+sql_text3='''
+select aa.txndate,
+       aa.成功交易商户数 cgjyshu,
+       aa.总交易商户数 zjyshs,
+       aa.成功交易商户数占比 cgjyshszb,
+       aa.成功交易笔数 cgjybs,
+       aa.总交易笔数 zjybs,
+       aa.成功交易笔数占比 cgjybszb,
+       aa.成功交易金额 cgjyje,
+       aa.T0金额 toje,
+       aa.T0交易占比 tojyzb,
+       bb.存量的交易商户数 cldjyshs,
+       bb.新增的交易商户数 xzdjyshs,
+       bb.总交易商户数 zjyshs,
+       bb.存量的交易笔数 cldjybs,
+       bb.新增的交易笔数 xzdjybs,
+       bb.总交易笔数 zjybs,
+       bb.存量交易金额 cldjyje,
+       bb.新增交易金额 xzjyje,
+       bb.总交易金额 zjyje,
+       bb.存量T0交易金额 cltojyje,
+       bb.新增T0交易金额 xztojyje,
+       bb.总T0交易金额 ztojyje,
+       ccc.存量的交易商户数 cldjyshs,
+       ccc.新增的交易商户数 xzdjyshs,
+       ccc.总交易商户数 zjyshs
+
+from (
+select a.txndate,
+       COUNT(DISTINCT CASE WHEN a.txnflag = 'S' THEN a.txnpartyid  END) 成功交易商户数,
+       COUNT(DISTINCT a.txnpartyid) 总交易商户数,
+       cast(COUNT(DISTINCT CASE WHEN a.txnflag = 'S' THEN a.txnpartyid END)/COUNT(DISTINCT a.txnpartyid)*100 as decimal(10,2))||'%' as 成功交易商户数占比,
+       SUM(CASE WHEN a.txnflag = 'S' THEN 1  END) 成功交易笔数,
+       COUNT(a.txnid) 总交易笔数,
+       cast(SUM(CASE WHEN a.txnflag = 'S' THEN 1  END)/COUNT(a.txnid)*100 as DECIMAL(10,2))||'%' 成功交易笔数占比,
+       SUM(CASE WHEN a.txnflag = 'S' THEN a.salesamt ELSE 0 END) 成功交易金额,
+       SUM(CASE WHEN a.txnflag = 'S' and a.settletype <> '0' THEN a.salesamt ELSE 0 END) T0金额,
+       cast(SUM(CASE WHEN a.txnflag = 'S' and a.settletype <> '0' THEN a.salesamt ELSE 0 END)/ SUM(CASE WHEN a.txnflag = 'S' THEN a.salesamt ELSE 0 END)*100 as DECIMAL(10,2))||'%' T0交易占比
+ from dev_dw.f_txnlist a
+where a.txntype='0200'  
+  and a.txnMode = 'F' 
+  and a.txndate = to_char(sysdate-1,'yyyymmdd')
+group by a.txndate) aa
+
+left join (
+select a.txndate,
+       count(distinct case when b.crtdate<(to_char(sysdate-90,'yyyymmdd')) then a.txnpartyid end) as 存量的交易商户数,
+       count(distinct case when b.crtdate>=(to_char(sysdate-90,'yyyymmdd')) then a.txnpartyid end) as 新增的交易商户数,
+       count(distinct a.txnpartyid) as 总交易商户数,
+       count(distinct case when b.crtdate<(to_char(sysdate-90,'yyyymmdd')) then a.txnid end) as 存量的交易笔数,
+       count(distinct case when b.crtdate>=(to_char(sysdate-90,'yyyymmdd')) then a.txnid end) as 新增的交易笔数,
+       count(distinct a.txnid) as 总交易笔数,
+       sum( case when b.crtdate<(to_char(sysdate-90,'yyyymmdd')) then a.salesamt end) as 存量交易金额,
+       sum( case when b.crtdate>=(to_char(sysdate-90,'yyyymmdd')) then a.salesamt end) as 新增交易金额，
+       sum(a.salesamt) as 总交易金额,
+       sum( case when b.crtdate<(to_char(sysdate-90,'yyyymmdd')) and a.settletype = '2' then a.salesamt end) as 存量T0交易金额,
+       sum( case when b.crtdate>=(to_char(sysdate-90,'yyyymmdd')) and a.settletype = '2' then a.salesamt end) as 新增T0交易金额，
+       sum(case when a.settletype = '2' then a.salesamt end) as 总T0交易金额
+from dev_dw.f_txnlist a
+join dev_dw.dim_txnparty b 
+  on a.txnpartyid=b.partyid
+where a.txntype='0200' 
+  and a.txnMode = 'F' 
+  and a.txnflag='S' 
+  and a.txndate = to_char(sysdate-1,'yyyymmdd')
+group by a.txndate) bb
+
+on aa.txndate = bb.txndate
+
+left join (select to_char(sysdate-1,'yyyymmdd') rq,
+       cc.存量的交易商户数,
+       cc.新增的交易商户数,
+       cc.总交易商户数
+from (
+select count(distinct case when b.crtdate<(to_char(sysdate-90,'yyyymmdd')) then a.txnpartyid end) as 存量的交易商户数,
+       count(distinct case when b.crtdate>=(to_char(sysdate-90,'yyyymmdd')) then a.txnpartyid end) as 新增的交易商户数,
+       count(distinct a.txnpartyid) as 总交易商户数
+from dev_dw.f_txnlist a
+join dev_dw.dim_txnparty b 
+  on a.txnpartyid=b.partyid
+where a.txntype='0200' 
+  and a.txnMode = 'F' 
+  and a.txnflag='S' 
+  and a.txndate between 20170615 and to_char(sysdate-1,'yyyymmdd')
+  ) cc) ccc
+  
+  on ccc.rq=aa.txndate
+ '''
+ 
+row_list = query_databases_result(sql_text)
+row_list_2 = query_databases_result(sql_text2)
+row_list_3 = query_databases_result(sql_text3)
+
+attachment_file = '/data/excel/KJ.xlsx'
+wr = XlsxWriter(xlsx_file=attachment_file)
+
+
+wr.add_worksheet()
+wr.set_worksheet_title('产品类型')
+wr.write_header(['产品类型', '注册商户数', '实名商户数','未实名商户数','累计注册商户数','自助进件','和伙人','传统代理商','峰融','雅其','信用管家'])    
+for row in row_list:
+    wr.write_row(list(row))
+	
+wr.add_worksheet()
+wr.set_worksheet_title('累计小微')
+wr.write_header(['累计商户数','累计商编数'])
+for row in row_list_2:  
+    wr.write_row(list(row))
+	
+wr.add_worksheet()
+wr.set_worksheet_title('快捷')
+wr.write_header(['交易日期','成功交易商户数','总交易商户数','成功交易商户数占比','成功交易笔数','总交易笔数','成功交易笔数占比','成功交易金额','T0金额','T0交易占比','存量的交易商户数','新增的交易商户数','总交易商户数','存量的交易笔数','新增的交易笔数','总交易笔数','存量交易金额','新增交易金额','总交易金额','存量T0交易金额','新增T0交易金额','总T0交易金额','存量的交易商户数','新增的交易商户数','总交易商户数'])
+for row in row_list_3:  
+    wr.write_row(list(row))	
+	
+wr.close()
+
+subject = '每日数据及快捷数据源'
+to_addrs = ['liancun.bai@andpay.me','huamancun@163.com']
+body_text = '您好，附件为每日数据及快捷数据源，请查阅！'
+
+EmailClient.send_email(subject, to_addrs, body_text,attachment_files=[attachment_file] )
